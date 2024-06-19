@@ -1,10 +1,20 @@
 import cv2
 import numpy as np
 from collections import deque
-# Read into gray image
-src = cv2.imread("01-90_89-139&598_334&667-328&664_143&660_142&600_327&604-0_0_16_32_31_27_24-61-13.jpg",
-                 cv2.IMREAD_COLOR)
+from torchvision import transforms
 
+
+def draw_boxes(image, boxes, confidences, class_ids, idxs, colors, classes):
+    for i in idxs:
+        x, y, w, h = boxes[i]
+        color = [int(c) for c in colors[class_ids[i]]]
+        cv2.rectangle(image, (x, y), (x + w, y + h), color, 2)
+        text = f"{classes[class_ids[i]]}: {confidences[i]:.2f}"
+        cv2.putText(image, text, (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+    return image
+
+# 加载YOLOv5的ONNX模型
+net = cv2.dnn.readNetFromONNX('best.onnx')
 
 # Get video from camera.
 cap = cv2.VideoCapture(0)
@@ -16,15 +26,15 @@ if not ret:
     print('Frame not captured.')
     exit()
 
-# Set the first frame as prev_frame used to check the stability of the video.
-prev_frame = src
-prev_gray = cv2.cvtColor(prev_frame, cv2.COLOR_BGR2GRAY)  # Convert the first frame to grayscale
-lk_params = dict(winSize=(15, 15),
-                     maxLevel=2,
-                     criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
+width = cap.get(3)
+height = cap.get(4)
 
-# To store motion features in a period.
-feas = deque()
+# 初始化颜色和类别名
+colors = np.array([
+    [255, 0, 0],
+    [0, 255, 0]
+])
+classes = ['blue_plate', 'green_plate']
 
 # Read into frames.
 while True:
@@ -35,13 +45,6 @@ while True:
         print('Frame not captured.')
         break
 
-    # Denoise and sharpen the frame.
-    gaussian = cv2.GaussianBlur(src, (5, 5), 0)
-    sharpen_kernel = np.array([[0, -1, 0],
-                                [-1, 5, -1],
-                                [0, -1, 0]])
-    sharpen =cv2.filter2D(gaussian, -1, sharpen_kernel)
-
     # Press 'Q' to exit
     if cv2.waitKey(1) & 0xFF == ord('q'):
         print('Exited normally.')
@@ -51,8 +54,62 @@ while True:
 
     # Display the videos.
     cv2.imshow("src", src)
-    cv2.imshow("gaussain", gaussian)
-    cv2.imshow("sharpen", sharpen)
+
+    # YOLOv5模型预处理
+    blob = cv2.dnn.blobFromImage(src, 1 / 255.0, (640, 640), swapRB=True, crop=False)
+    net.setInput(blob)
+
+    # 进行前向传播，获取输出
+    outputs = net.forward()
+    # print(outputs.shape)
+
+    # YOLOv5参数
+    conf_threshold = 0.5
+    nms_threshold = 0.4
+
+    # 解析输出
+    boxes = []
+    confidences = []
+    class_ids = []
+
+    # 将需要的box提取出来
+    for detection in outputs[0]:
+        box_iou = detection[4]
+        class_iou = detection[5:]
+        for i in range(len(class_iou)):
+            confidence = box_iou * class_iou[i]
+            if confidence > conf_threshold:
+                box = detection[0:4] * np.array([width / 640, height / 640, width / 640, height / 640])
+                (centerX, centerY, w, h) = box.astype("int")
+                x = int(centerX - (w / 2))
+                y = int(centerY - (h / 2))
+                boxes.append([x, y, int(w), int(h)])
+                confidences.append(float(confidence))
+                class_ids.append(i)
+
+    # 应用非极大值抑制
+    idxs = cv2.dnn.NMSBoxes(boxes, confidences, conf_threshold, nms_threshold)
+
+    image = src.copy()
+    # 绘制检测结果
+    if len(idxs) > 0:
+        idxs = idxs.flatten()
+        image = draw_boxes(src, boxes, confidences, class_ids, idxs, colors, classes)
+
+    cv2.imshow('YOLO detected', image)
+
+cv2.destroyAllWindows()
+
+"""
+# Set the first frame as prev_frame used to check the stability of the video.
+prev_frame = src
+prev_gray = cv2.cvtColor(prev_frame, cv2.COLOR_BGR2GRAY)  # Convert the first frame to grayscale
+lk_params = dict(winSize=(15, 15),
+                     maxLevel=2,
+                     criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
+
+# To store motion features in a period.
+feas = deque()
 
     # Check if the video is stable.
     gray = cv2.cvtColor(sharpen, cv2.COLOR_BGR2GRAY)
@@ -93,6 +150,7 @@ while True:
     fea_period = sum(feas) / len(feas)
     print(fea_period, end=' ')
 
+    # Set a threshold.
     if fea_period < 10:
         print('Stable')
     else:
@@ -103,17 +161,82 @@ while True:
 cap.release()
 
 """
-# These are the codes to read images.
-gaussian = cv2.GaussianBlur(src, (5, 5), 0)
-sharpen_kernel = np.array([[0, -1, 0],
-                            [-1, 5, -1],
-                            [0, -1, 0]])
-sharpen_image =cv2.filter2D(src, -1, sharpen_kernel)
 
-cv2.imshow("src",src)
-cv2.imshow("gaussain", gaussian)
-cv2.imshow("sharpen", sharpen_image)
-cv2.waitKey(0)
 """
 
+# 测试图片用代码
+def draw_boxes(image, boxes, confidences, class_ids, idxs, colors, classes):
+    for i in idxs:
+        x, y, w, h = boxes[i]
+        color = [int(c) for c in colors[class_ids[i]]]
+        cv2.rectangle(image, (x, y), (x + w, y + h), color, 2)
+        text = f"{classes[class_ids[i]]}: {confidences[i]:.2f}"
+        cv2.putText(image, text, (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+    return image
+
+
+# 加载YOLOv5的ONNX模型
+net = cv2.dnn.readNetFromONNX('best.onnx')
+
+# 读取输入图像
+image = cv2.imread('6d86b00da904752acef7bb6d66d86e7.jpg')
+# image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+height, width = image.shape[:2]
+
+# YOLOv5模型预处理
+blob = cv2.dnn.blobFromImage(image, 1 / 255.0, (640, 640), swapRB=True, crop=False)
+net.setInput(blob)
+
+# 进行前向传播，获取输出
+outputs = net.forward()
+# print(outputs.shape)
+
+# YOLOv5参数
+conf_threshold = 0.5
+nms_threshold = 0.4
+
+# 初始化颜色和类别名
+colors = np.array([
+    [255, 0, 0],
+    [0, 255, 0]
+])
+classes = ['blue_plate', 'green_plate']
+
+# 解析输出
+boxes = []
+confidences = []
+class_ids = []
+
+# print(outputs.shape)
+# print(outputs[0, 0])
+
+# 将需要的box提取出来
+for detection in outputs[0]:
+    box_iou = detection[4]
+    class_iou = detection[5:]
+    for i in range(len(class_iou)):
+        confidence = box_iou * class_iou[i]
+        if confidence > conf_threshold:
+            box = detection[0:4] * np.array([width / 640, height / 640, width / 640, height / 640])
+            (centerX, centerY, w, h) = box.astype("int")
+            x = int(centerX - (w / 2))
+            y = int(centerY - (h / 2))
+            boxes.append([x, y, int(w), int(h)])
+            confidences.append(float(confidence))
+            class_ids.append(i)
+
+# 应用非极大值抑制
+idxs = cv2.dnn.NMSBoxes(boxes, confidences, conf_threshold, nms_threshold)
+
+# 绘制检测结果
+if len(idxs) > 0:
+    idxs = idxs.flatten()
+    image = draw_boxes(image, boxes, confidences, class_ids, idxs, colors, classes)
+
+# 显示结果图像
+cv2.imshow('YOLOv5 Detection', image)
+cv2.waitKey(0)
 cv2.destroyAllWindows()
+"""
+
+
