@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
+import easyocr
 from collections import deque
-from torchvision import transforms
 
 
 def draw_boxes(image, boxes, confidences, class_ids, idxs, colors, classes):
@@ -35,6 +35,9 @@ colors = np.array([
     [0, 255, 0]
 ])
 classes = ['blue_plate', 'green_plate']
+
+# EasyOCR初始化
+reader = easyocr.Reader(['ch_sim','en'])
 
 # Read into frames.
 while True:
@@ -76,16 +79,20 @@ while True:
     for detection in outputs[0]:
         box_iou = detection[4]
         class_iou = detection[5:]
+        class_id = 0
         for i in range(len(class_iou)):
-            confidence = box_iou * class_iou[i]
-            if confidence > conf_threshold:
-                box = detection[0:4] * np.array([width / 640, height / 640, width / 640, height / 640])
-                (centerX, centerY, w, h) = box.astype("int")
-                x = int(centerX - (w / 2))
-                y = int(centerY - (h / 2))
-                boxes.append([x, y, int(w), int(h)])
-                confidences.append(float(confidence))
-                class_ids.append(i)
+            if class_iou[i] > class_iou[class_id]:
+                class_id = i
+        confidence = box_iou * class_iou[class_id]
+        if confidence > conf_threshold:
+            box = detection[0:4] * np.array([width / 640, height / 640, width / 640, height / 640])
+            (centerX, centerY, w, h) = box.astype("int")
+            x = int(centerX - (w / 2))
+            y = int(centerY - (h / 2))
+            boxes.append([x, y, int(w), int(h)])
+            confidences.append(float(confidence))
+            class_ids.append(class_id)
+
 
     # 应用非极大值抑制
     idxs = cv2.dnn.NMSBoxes(boxes, confidences, conf_threshold, nms_threshold)
@@ -93,10 +100,57 @@ while True:
     image = src.copy()
     # 绘制检测结果
     if len(idxs) > 0:
+        # 绘制检测结果
         idxs = idxs.flatten()
-        image = draw_boxes(src, boxes, confidences, class_ids, idxs, colors, classes)
+        yolo_detected = draw_boxes(image, boxes, confidences, class_ids, idxs, colors, classes)
+
+        # 裁剪图像
+        max_square = 0
+        max_idx = idxs[0]
+
+        for idx in idxs:
+            square = boxes[idx][2] * boxes[idx][3]
+            if square > max_square:
+                max_square = square
+                max_idx = idx
+
+        x, y, w, h = boxes[max_idx]
+        if x <= 0 or y <= 0 or w <= 0 or h <= 0:
+            continue
+        yolo_cropped = src[y:y + h, x:x + w]
+        # cv2.imshow("Cropped image", yolo_cropped)
+
+        # 对图像进行处理
+        # 转换为灰度图像
+        gray = cv2.cvtColor(yolo_cropped, cv2.COLOR_BGR2GRAY)
+        # cv2.imshow("Gray", gray)
+
+        # 直方图正规化
+        hist = cv2.equalizeHist(gray)
+        # cv2.imshow("hist", hist)
+
+        # 锐化
+        kernel = np.array([[0, -1, 0],
+                           [-1, 5, -1],
+                           [0, -1, 0]])
+        sharpened_image = cv2.filter2D(hist, -1, kernel)
+        # cv2.imshow("Sharpen", sharpened_image)
+
+        # 阈值化
+        ret, TOZERO_img = cv2.threshold(hist, 150, 255, cv2.THRESH_TOZERO)
+        # cv2.imshow("threshold", TOZERO_img)
+
+        # 将锐化与阈值化加权平均
+        result = cv2.addWeighted(sharpened_image, 0.2, TOZERO_img, 0.8, 0)
+        cv2.imshow("result", result)
+
+        # OCR检测
+        plate = reader.readtext(result, detail=0)
+        print(plate)
+
 
     cv2.imshow('YOLO detected', image)
+
 
 cv2.destroyAllWindows()
 
@@ -162,8 +216,8 @@ cap.release()
 
 """
 
-"""
 
+"""
 # 测试图片用代码
 def draw_boxes(image, boxes, confidences, class_ids, idxs, colors, classes):
     for i in idxs:
@@ -214,29 +268,71 @@ class_ids = []
 for detection in outputs[0]:
     box_iou = detection[4]
     class_iou = detection[5:]
+    class_id = 0
     for i in range(len(class_iou)):
-        confidence = box_iou * class_iou[i]
-        if confidence > conf_threshold:
-            box = detection[0:4] * np.array([width / 640, height / 640, width / 640, height / 640])
-            (centerX, centerY, w, h) = box.astype("int")
-            x = int(centerX - (w / 2))
-            y = int(centerY - (h / 2))
-            boxes.append([x, y, int(w), int(h)])
-            confidences.append(float(confidence))
-            class_ids.append(i)
+        if class_iou[i] > class_iou[class_id]:
+            class_id = i
+    confidence = box_iou * class_iou[class_id]
+    if confidence > conf_threshold:
+        box = detection[0:4] * np.array([width / 640, height / 640, width / 640, height / 640])
+        (centerX, centerY, w, h) = box.astype("int")
+        x = int(centerX - (w / 2))
+        y = int(centerY - (h / 2))
+        boxes.append([x, y, int(w), int(h)])
+        confidences.append(float(confidence))
+        class_ids.append(class_id)
 
 # 应用非极大值抑制
 idxs = cv2.dnn.NMSBoxes(boxes, confidences, conf_threshold, nms_threshold)
+image_copyed = image.copy()
+# print(idxs)
 
-# 绘制检测结果
 if len(idxs) > 0:
+    # 绘制检测结果
     idxs = idxs.flatten()
-    image = draw_boxes(image, boxes, confidences, class_ids, idxs, colors, classes)
+    yolo_detected = draw_boxes(image_copyed, boxes, confidences, class_ids, idxs, colors, classes)
+
+    # 裁剪图像
+    max_square = 0
+    max_idx = idxs[0]
+
+    for idx in idxs:
+        print(boxes[idx])
+        square = boxes[idx][2] * boxes[idx][3]
+        if square > max_square:
+            max_square = square
+            max_idx = idx
+
+    x, y, w, h = boxes[max_idx]
+    yolo_cropped = image[y:y + h, x:x + w]
+    cv2.imshow("Cropped image", yolo_cropped)
+
+    # 对图像进行处理
+    # 转换为灰度图像
+    gray = cv2.cvtColor(yolo_cropped, cv2.COLOR_BGR2GRAY)
+    cv2.imshow("Gray", gray)
+    median_filtered = cv2.medianBlur(gray, 5)
+
+    # 中值滤波
+    cv2.imshow("Median Blured", median_filtered)
+
+    # 阈值化
+    ret, OTSU_img = cv2.threshold(median_filtered, 0, 255, cv2.THRESH_OTSU)
+    cv2.imshow("threshold", OTSU_img)
+
+    # 锐化
+    kernel = np.array([[0, -1, 0],
+                       [-1, 5, -1],
+                       [0, -1, 0]])
+    sharpened_image = cv2.filter2D(OTSU_img, -1, kernel)
+    cv2.imshow("Sharpen", sharpened_image)
+
 
 # 显示结果图像
-cv2.imshow('YOLOv5 Detection', image)
+# cv2.imshow('YOLOv5 Detection', yolo_detected)
 cv2.waitKey(0)
 cv2.destroyAllWindows()
 """
+
 
 
