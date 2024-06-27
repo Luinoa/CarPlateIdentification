@@ -1,6 +1,6 @@
 import cv2
 import numpy as np
-import easyocr
+from paddleocr import PaddleOCR, draw_ocr
 from collections import deque
 
 
@@ -36,8 +36,8 @@ colors = np.array([
 ])
 classes = ['blue_plate', 'green_plate']
 
-# EasyOCR初始化
-reader = easyocr.Reader(['ch_sim','en'])
+# 初始化OCR
+ocr = PaddleOCR(use_angle_cls=True, lang="ch")  # need to run only once to download and load model into memory
 
 # Read into frames.
 while True:
@@ -121,33 +121,45 @@ while True:
         # cv2.imshow("Cropped image", yolo_cropped)
 
         # 对图像进行处理
-        # 转换为灰度图像
-        gray = cv2.cvtColor(yolo_cropped, cv2.COLOR_BGR2GRAY)
-        # cv2.imshow("Gray", gray)
+        # 蓝牌情况
+        if class_ids[idx] == 0:
+            # 除去蓝色通道转换成灰度图
+            gray = cv2.addWeighted(yolo_cropped[:, :, 1], 0.5, yolo_cropped[:, :, 2], 0.5, 0)
+            # cv2.imshow("Gray", gray)
 
-        # 直方图正规化
-        hist = cv2.equalizeHist(gray)
-        # cv2.imshow("hist", hist)
+            # 直方图正规化
+            hist = cv2.equalizeHist(gray)
+            # cv2.imshow("hist", hist)
 
-        # 锐化
-        kernel = np.array([[0, -1, 0],
-                           [-1, 5, -1],
-                           [0, -1, 0]])
-        sharpened_image = cv2.filter2D(hist, -1, kernel)
-        # cv2.imshow("Sharpen", sharpened_image)
+            # 阈值化
+            ret, TOZERO_img = cv2.threshold(hist, 180, 255, cv2.THRESH_TOZERO)
+            # cv2.imshow("result", TOZERO_img)
 
-        # 阈值化
-        ret, TOZERO_img = cv2.threshold(hist, 150, 255, cv2.THRESH_TOZERO)
-        # cv2.imshow("threshold", TOZERO_img)
+            # OCR检测
+            plate = ocr.ocr(TOZERO_img)
+            print(plate)
 
-        # 将锐化与阈值化加权平均
-        result = cv2.addWeighted(sharpened_image, 0.2, TOZERO_img, 0.8, 0)
-        cv2.imshow("result", result)
+        # 绿牌情况
+        elif class_ids[idx] == 1:
+            # 除去绿色通道转换成灰度图
+            gray = cv2.addWeighted(yolo_cropped[:, :, 0], 0.5, yolo_cropped[:, :, 2], 0.5, 0)
+            # cv2.imshow("Gray", gray)
 
-        # OCR检测
-        plate = reader.readtext(result, detail=0)
-        print(plate)
+            # 直方图正规化
+            hist = cv2.equalizeHist(gray)
+            # cv2.imshow("hist", hist)
 
+            # 阈值化
+            ret, TRUNC_img = cv2.threshold(hist, 150, 255, cv2.THRESH_TRUNC)
+            # cv2.imshow("threshold", TRUNC_img)
+
+            # 中值滤波
+            median_filtered = cv2.medianBlur(TRUNC_img, 3)
+            cv2.imshow("result", median_filtered)
+
+            # OCR检测
+            plate = ocr.ocr(TRUNC_img)
+            print(plate)
 
     cv2.imshow('YOLO detected', image)
 
