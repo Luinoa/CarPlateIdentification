@@ -63,6 +63,7 @@ def handle_ocr_output(plate):
         if item[0][1] < valid_IoU:
             continue
         if item[0][1] > IoU:
+            IoU = item[0][1]
             plate_num = item[0][0]
             rtn = True
     return rtn, plate_num
