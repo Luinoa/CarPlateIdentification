@@ -3,6 +3,71 @@ import numpy as np
 from paddleocr import PaddleOCR, draw_ocr
 from collections import deque
 
+province_list = [
+    "皖", "沪", "津", "渝", "冀",
+    "晋", "蒙", "辽", "吉", "黑",
+    "苏", "浙", "京", "闽", "赣",
+    "鲁", "豫", "鄂", "湘", "粤",
+    "桂", "琼", "川", "贵", "云",
+    "西", "陕", "甘", "青", "宁",
+    "新"]
+
+letter_list = [
+    "A", "B", "C", "D", "E",
+    "F", "G", "H", "J", "K",
+    "L", "M", "N", "P", "Q",
+    "R", "S", "T", "U", "V",
+    "W", "X", "Y", "Z"]
+
+number_list = [
+    "0", "1","2", "3", "4",
+    "5", "6", "7", "8", "9"
+]
+
+
+def check_plate(plate_num, label):
+    # 确认长度
+    # 蓝牌
+    if label == 0:
+        if len(plate_num) != 8:
+            return False
+
+    # 绿牌
+    if label == 1:
+        if len(plate_num) != 9:
+            return False
+
+    # 确认车牌字符是否在对应字符集里
+    if plate_num[0] not in province_list:
+        return False
+    if plate_num[1] not in letter_list:
+        return False
+    if plate_num[2] != '·':
+        return False
+    car_num = plate_num[3:]
+    for char_in_plate in car_num:
+        if char_in_plate not in letter_list and char_in_plate not in number_list:
+            return False
+
+    return True
+
+# 取出IoU最大的识别结果
+def handle_ocr_output(plate):
+    IoU = 0.0
+    valid_IoU = 0.9
+    plate_num = None
+    rtn = False
+    for item in plate:
+        if item is None:
+            continue
+        if item[0][1] < valid_IoU:
+            continue
+        if item[0][1] > IoU:
+            plate_num = item[0][0]
+            rtn = True
+    return rtn, plate_num
+
+
 
 def draw_boxes(image, boxes, confidences, class_ids, idxs, colors, classes):
     for i in idxs:
@@ -118,6 +183,7 @@ while True:
         if x <= 0 or y <= 0 or w <= 0 or h <= 0:
             continue
         yolo_cropped = src[y:y + h, x:x + w]
+        # print(max_square)
         # cv2.imshow("Cropped image", yolo_cropped)
 
         # 对图像进行处理
@@ -133,11 +199,17 @@ while True:
 
             # 阈值化
             ret, TOZERO_img = cv2.threshold(hist, 180, 255, cv2.THRESH_TOZERO)
-            # cv2.imshow("result", TOZERO_img)
+            cv2.imshow("result", TOZERO_img)
 
             # OCR检测
-            plate = ocr.ocr(TOZERO_img)
+            plate = ocr.ocr(TOZERO_img, det=False)
             print(plate)
+
+            # 处理输出，判断格式
+            rtn, plate_num = handle_ocr_output(plate)
+            if rtn:
+                print(check_plate(plate_num, label=0))
+
 
         # 绿牌情况
         elif class_ids[idx] == 1:
@@ -151,15 +223,21 @@ while True:
 
             # 阈值化
             ret, TRUNC_img = cv2.threshold(hist, 150, 255, cv2.THRESH_TRUNC)
-            # cv2.imshow("threshold", TRUNC_img)
+            cv2.imshow("threshold", TRUNC_img)
 
             # 中值滤波
             median_filtered = cv2.medianBlur(TRUNC_img, 3)
-            cv2.imshow("result", median_filtered)
+            # cv2.imshow("result", median_filtered)
 
             # OCR检测
-            plate = ocr.ocr(TRUNC_img)
+            plate = ocr.ocr(median_filtered, det=False)
             print(plate)
+
+            # 处理输出，判断格式
+            rtn, plate_num = handle_ocr_output(plate)
+            if rtn:
+                print(check_plate(plate_num, label=1))
+
 
     cv2.imshow('YOLO detected', image)
 
