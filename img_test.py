@@ -1,5 +1,72 @@
 import cv2
 import numpy as np
+from paddleocr import PaddleOCR
+
+province_list = [
+    "皖", "沪", "津", "渝", "冀",
+    "晋", "蒙", "辽", "吉", "黑",
+    "苏", "浙", "京", "闽", "赣",
+    "鲁", "豫", "鄂", "湘", "粤",
+    "桂", "琼", "川", "贵", "云",
+    "西", "陕", "甘", "青", "宁",
+    "新"]
+
+letter_list = [
+    "A", "B", "C", "D", "E",
+    "F", "G", "H", "J", "K",
+    "L", "M", "N", "P", "Q",
+    "R", "S", "T", "U", "V",
+    "W", "X", "Y", "Z"]
+
+number_list = [
+    "0", "1", "2", "3", "4",
+    "5", "6", "7", "8", "9"
+]
+
+
+def check_plate(plate_num, label):
+    # 确认长度
+    # 蓝牌
+    if label == 0:
+        if len(plate_num) != 8:
+            return False
+
+    # 绿牌
+    if label == 1:
+        if len(plate_num) != 9:
+            return False
+
+    # 确认车牌字符是否在对应字符集里
+    if plate_num[0] not in province_list:
+        return False
+    if plate_num[1] not in letter_list:
+        return False
+    if plate_num[2] != '·':
+        return False
+    car_num = plate_num[3:]
+    for char_in_plate in car_num:
+        if char_in_plate not in letter_list and char_in_plate not in number_list:
+            return False
+
+    return True
+
+# 取出IoU最大的识别结果
+def handle_ocr_output(plate):
+    IoU = 0.0
+    valid_IoU = 0.9
+    plate_num = None
+    rtn = False
+    for item in plate:
+        if item is None:
+            continue
+        if item[0][1] < valid_IoU:
+            continue
+        if item[0][1] > IoU:
+            IoU = item[0][1]
+            plate_num = item[0][0]
+            rtn = True
+    return rtn, plate_num
+
 
 # 测试图片用代码
 def draw_boxes(image, boxes, confidences, class_ids, idxs, colors, classes):
@@ -16,12 +83,12 @@ def draw_boxes(image, boxes, confidences, class_ids, idxs, colors, classes):
 net = cv2.dnn.readNetFromONNX('best.onnx')
 
 # 读取输入图像
-image = cv2.imread('6d86b00da904752acef7bb6d66d86e7.jpg')
+src = cv2.imread('green_plate_009824.jpg')
 # image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-height, width = image.shape[:2]
+height, width = src.shape[:2]
 
 # YOLOv5模型预处理
-blob = cv2.dnn.blobFromImage(image, 1 / 255.0, (640, 640), swapRB=True, crop=False)
+blob = cv2.dnn.blobFromImage(src, 1 / 255.0, (640, 640), swapRB=True, crop=False)
 net.setInput(blob)
 
 # 进行前向传播，获取输出
@@ -47,6 +114,9 @@ class_ids = []
 # print(outputs.shape)
 # print(outputs[0, 0])
 
+# 初始化OCR
+ocr = PaddleOCR(use_angle_cls=True, lang="ch")
+
 # 将需要的box提取出来
 for detection in outputs[0]:
     box_iou = detection[4]
@@ -67,51 +137,88 @@ for detection in outputs[0]:
 
 # 应用非极大值抑制
 idxs = cv2.dnn.NMSBoxes(boxes, confidences, conf_threshold, nms_threshold)
-image_copyed = image.copy()
+image_copyed = src.copy()
 # print(idxs)
 
+# 绘制检测结果
 if len(idxs) > 0:
     # 绘制检测结果
     idxs = idxs.flatten()
     yolo_detected = draw_boxes(image_copyed, boxes, confidences, class_ids, idxs, colors, classes)
+    cv2.imshow("YOLO detected", yolo_detected)
 
     # 裁剪图像
     max_square = 0
     max_idx = idxs[0]
 
     for idx in idxs:
-        print(boxes[idx])
         square = boxes[idx][2] * boxes[idx][3]
         if square > max_square:
             max_square = square
             max_idx = idx
 
     x, y, w, h = boxes[max_idx]
-    yolo_cropped = image[y:y + h, x:x + w]
+    if x <= 0 or y <= 0 or w <= 0 or h <= 0:
+        exit()
+    yolo_cropped = src[y:y + h, x:x + w]
+    # print(max_square)
     cv2.imshow("Cropped image", yolo_cropped)
 
     # 对图像进行处理
-    # 转换为灰度图像
-    gray = cv2.cvtColor(yolo_cropped, cv2.COLOR_BGR2GRAY)
-    cv2.imshow("Gray", gray)
-    median_filtered = cv2.medianBlur(gray, 5)
+    # 蓝牌情况
+    if class_ids[max_idx] == 0:
+        # 除去蓝色通道转换成灰度图
+        gray = cv2.addWeighted(yolo_cropped[:, :, 1], 0.5, yolo_cropped[:, :, 2], 0.5, 0)
+        cv2.imshow("gray", gray)
 
-    # 中值滤波
-    cv2.imshow("Median Blured", median_filtered)
+        # 直方图正规化
+        hist = cv2.equalizeHist(gray)
+        cv2.imshow("hist", hist)
 
-    # 阈值化
-    ret, OTSU_img = cv2.threshold(median_filtered, 0, 255, cv2.THRESH_OTSU)
-    cv2.imshow("threshold", OTSU_img)
+        # 阈值化
+        ret, TOZERO_img = cv2.threshold(hist, 180, 255, cv2.THRESH_TOZERO)
+        cv2.imshow("threshold", TOZERO_img)
 
-    # 锐化
-    kernel = np.array([[0, -1, 0],
-                       [-1, 5, -1],
-                       [0, -1, 0]])
-    sharpened_image = cv2.filter2D(OTSU_img, -1, kernel)
-    cv2.imshow("Sharpen", sharpened_image)
+        # 中值滤波
+        median_filtered = cv2.medianBlur(TOZERO_img, 3)
+        cv2.imshow("result", median_filtered)
+
+        # OCR检测
+        plate = ocr.ocr(TOZERO_img, det=False)
+        print(plate)
+
+        # 处理输出，判断格式
+        rtn, plate_num = handle_ocr_output(plate)
+        if rtn:
+            print(check_plate(plate_num, label=0))
 
 
-# 显示结果图像
-# cv2.imshow('YOLOv5 Detection', yolo_detected)
+    # 绿牌情况
+    elif class_ids[max_idx] == 1:
+        # 取绿色通道转换成灰度图
+        gray = yolo_cropped[:, :, 1]
+        cv2.imshow("gray", gray)
+
+        # 直方图正规化
+        hist = cv2.equalizeHist(gray)
+        cv2.imshow("hist", hist)
+
+        # 阈值化
+        ret, TRUNC_img = cv2.threshold(hist, 200, 255, cv2.THRESH_TRUNC)
+        cv2.imshow("threshold", TRUNC_img)
+
+        # 中值滤波
+        median_filtered = cv2.medianBlur(TRUNC_img, 3)
+        cv2.imshow("result", median_filtered)
+
+        # OCR检测
+        plate = ocr.ocr(median_filtered, det=False)
+        print(plate)
+
+        # 处理输出，判断格式
+        rtn, plate_num = handle_ocr_output(plate)
+        if rtn:
+            print(check_plate(plate_num, label=1))
+
 cv2.waitKey(0)
 cv2.destroyAllWindows()
