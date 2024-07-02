@@ -124,6 +124,9 @@ while True:
     # Display the videos.
     cv2.imshow("src", src)
 
+    # 测试没有处理前OCR的能力
+    # print(ocr.ocr(src))
+
     # YOLOv5模型预处理
     blob = cv2.dnn.blobFromImage(src, 1 / 255.0, (640, 640), swapRB=True, crop=False)
     net.setInput(blob)
@@ -169,6 +172,7 @@ while True:
         # 绘制检测结果
         idxs = idxs.flatten()
         yolo_detected = draw_boxes(image, boxes, confidences, class_ids, idxs, colors, classes)
+        cv2.imshow('YOLO detected', yolo_detected)
 
         # 裁剪图像
         max_square = 0
@@ -184,23 +188,27 @@ while True:
         if x <= 0 or y <= 0 or w <= 0 or h <= 0:
             continue
         yolo_cropped = src[y:y + h, x:x + w]
-        # print(max_square)
+        print(max_square)
         # cv2.imshow("Cropped image", yolo_cropped)
 
         # 对图像进行处理
         # 蓝牌情况
-        if class_ids[idx] == 0:
+        if class_ids[max_idx] == 0:
             # 除去蓝色通道转换成灰度图
             gray = cv2.addWeighted(yolo_cropped[:, :, 1], 0.5, yolo_cropped[:, :, 2], 0.5, 0)
-            # cv2.imshow("Gray", gray)
+            cv2.imshow("Gray", gray)
 
             # 直方图正规化
             hist = cv2.equalizeHist(gray)
-            # cv2.imshow("hist", hist)
+            cv2.imshow("hist", hist)
 
             # 阈值化
-            ret, TOZERO_img = cv2.threshold(hist, 180, 255, cv2.THRESH_TOZERO)
-            cv2.imshow("result", TOZERO_img)
+            ret, TOZERO_img = cv2.threshold(hist, 160, 255, cv2.THRESH_TOZERO)
+            cv2.imshow("threshold", TOZERO_img)
+
+            # 中值滤波
+            median_filtered = cv2.medianBlur(TOZERO_img, 3)
+            cv2.imshow("result", median_filtered)
 
             # OCR检测
             plate = ocr.ocr(TOZERO_img, det=False)
@@ -213,22 +221,22 @@ while True:
 
 
         # 绿牌情况
-        elif class_ids[idx] == 1:
-            # 除去绿色通道转换成灰度图
-            gray = cv2.addWeighted(yolo_cropped[:, :, 0], 0.5, yolo_cropped[:, :, 2], 0.5, 0)
-            # cv2.imshow("Gray", gray)
+        elif class_ids[max_idx] == 1:
+            # 取绿色通道转换成灰度图
+            gray = yolo_cropped[:, :, 1]
+            cv2.imshow("Gray", gray)
 
             # 直方图正规化
             hist = cv2.equalizeHist(gray)
-            # cv2.imshow("hist", hist)
+            cv2.imshow("hist", hist)
 
             # 阈值化
-            ret, TRUNC_img = cv2.threshold(hist, 150, 255, cv2.THRESH_TRUNC)
+            ret, TRUNC_img = cv2.threshold(hist, 200, 255, cv2.THRESH_TRUNC)
             cv2.imshow("threshold", TRUNC_img)
 
             # 中值滤波
             median_filtered = cv2.medianBlur(TRUNC_img, 3)
-            # cv2.imshow("result", median_filtered)
+            cv2.imshow("result", median_filtered)
 
             # OCR检测
             plate = ocr.ocr(median_filtered, det=False)
@@ -240,70 +248,7 @@ while True:
                 print(check_plate(plate_num, label=1))
 
 
-    cv2.imshow('YOLO detected', image)
-
 
 cv2.destroyAllWindows()
 
-"""
-# Set the first frame as prev_frame used to check the stability of the video.
-prev_frame = src
-prev_gray = cv2.cvtColor(prev_frame, cv2.COLOR_BGR2GRAY)  # Convert the first frame to grayscale
-lk_params = dict(winSize=(15, 15),
-                     maxLevel=2,
-                     criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
-
-# To store motion features in a period.
-feas = deque()
-
-    # Check if the video is stable.
-    gray = cv2.cvtColor(sharpen, cv2.COLOR_BGR2GRAY)
-    p0 = cv2.goodFeaturesToTrack(prev_gray,
-                                 maxCorners=100,
-                                 qualityLevel=0.3,
-                                 minDistance=7,
-                                 blockSize=7)  # Detect good features to track in the previous frame
-
-    if p0 is None:
-        prev_gray = gray.copy()
-        continue
-
-    #  Calculate optical flow to get the new feature positions in the current frame.
-    p1, st, err = cv2.calcOpticalFlowPyrLK(prev_gray, gray, p0, None,
-                                           winSize=(15, 15),
-                                           maxLevel=2,
-                                           criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
-
-    prev_gray = gray.copy()  # Update the previous frame to the current frame
-
-    if p1 is None:
-        continue
-
-    motion = p1 - p0  # Calculate the displacement of the feature points (motion vectors)
-
-    # Calculate the feature value of the motion.
-    abs_sum = 0
-    for i in range(motion.shape[0]):
-        abs_sum = abs_sum + abs(motion[i, 0, 0]) + abs(motion[i, 0, 1])
-    fea_val = abs_sum / motion.shape[0]
-
-    # Store the feature value.
-    if len(feas) > 10:
-        feas.popleft()
-    feas.append(fea_val)
-
-    fea_period = sum(feas) / len(feas)
-    print(fea_period, end=' ')
-
-    # Set a threshold.
-    if fea_period < 10:
-        print('Stable')
-    else:
-        print('Unstable')
-
-
-
-cap.release()
-
-"""
 
