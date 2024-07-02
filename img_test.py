@@ -83,7 +83,7 @@ def draw_boxes(image, boxes, confidences, class_ids, idxs, colors, classes):
 net = cv2.dnn.readNetFromONNX('best.onnx')
 
 # 读取输入图像
-src = cv2.imread('green_plate_009824.jpg')
+src = cv2.imread('6d86b00da904752acef7bb6d66d86e7.jpg')
 # image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 height, width = src.shape[:2]
 
@@ -116,6 +116,9 @@ class_ids = []
 
 # 初始化OCR
 ocr = PaddleOCR(use_angle_cls=True, lang="ch")
+
+# 自适应直方图均衡化
+clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
 
 # 将需要的box提取出来
 for detection in outputs[0]:
@@ -171,20 +174,16 @@ if len(idxs) > 0:
         gray = cv2.addWeighted(yolo_cropped[:, :, 1], 0.5, yolo_cropped[:, :, 2], 0.5, 0)
         cv2.imshow("gray", gray)
 
-        # 直方图正规化
-        hist = cv2.equalizeHist(gray)
+        # 自适应直方图均衡化
+        hist = clahe.apply(gray)
         cv2.imshow("hist", hist)
 
-        # 阈值化
-        ret, TOZERO_img = cv2.threshold(hist, 180, 255, cv2.THRESH_TOZERO)
-        cv2.imshow("threshold", TOZERO_img)
-
         # 中值滤波
-        median_filtered = cv2.medianBlur(TOZERO_img, 3)
+        median_filtered = cv2.medianBlur(hist, 3)
         cv2.imshow("result", median_filtered)
 
         # OCR检测
-        plate = ocr.ocr(TOZERO_img, det=False)
+        plate = ocr.ocr(median_filtered, det=False)
         print(plate)
 
         # 处理输出，判断格式
@@ -199,16 +198,13 @@ if len(idxs) > 0:
         gray = yolo_cropped[:, :, 1]
         cv2.imshow("gray", gray)
 
-        # 直方图正规化
-        hist = cv2.equalizeHist(gray)
+        # 自适应直方图均衡化
+        hist = clahe.apply(gray)
         cv2.imshow("hist", hist)
-
-        # 阈值化
-        ret, TRUNC_img = cv2.threshold(hist, 200, 255, cv2.THRESH_TRUNC)
-        cv2.imshow("threshold", TRUNC_img)
+        cv2.imwrite("hist_template.png", hist)
 
         # 中值滤波
-        median_filtered = cv2.medianBlur(TRUNC_img, 3)
+        median_filtered = cv2.medianBlur(hist, 3)
         cv2.imshow("result", median_filtered)
 
         # OCR检测

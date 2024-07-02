@@ -24,6 +24,34 @@ number_list = [
     "5", "6", "7", "8", "9"
 ]
 
+def calculate_cdf(hist):
+    cdf = hist.cumsum()
+    cdf_normalized = cdf / cdf[-1]
+    return cdf_normalized
+
+def histogram_specification(src_image, target_hist):
+    # 计算图像的直方图
+    src_hist = cv2.calcHist([src_image], [0], None, [256], [0, 256]).flatten()
+
+    # 计算源图像的CDF
+    src_cdf = calculate_cdf(src_hist)
+
+    # 计算目标直方图的CDF
+    target_cdf = calculate_cdf(target_hist)
+
+    # 创建映射表
+    mapping = np.zeros(256, dtype=np.uint8)
+
+    src_value = 0
+    for target_value in range(256):
+        while src_value < 256 and src_cdf[src_value] < target_cdf[target_value]:
+            src_value += 1
+        mapping[target_value] = src_value if src_value < 256 else 255
+
+    # 映射源图像
+    specified_image = cv2.LUT(src_image, mapping)
+
+    return specified_image
 
 def check_plate(plate_num, label):
     # 确认长度
@@ -102,8 +130,14 @@ colors = np.array([
 ])
 classes = ['blue_plate', 'green_plate']
 
+# 自适应直方图均衡化
+clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+
 # 初始化OCR
 ocr = PaddleOCR(use_angle_cls=True, lang="ch")  # need to run only once to download and load model into memory
+
+hist_template = cv2.imread("hist_template.png", cv2.IMREAD_GRAYSCALE)
+target_hist = cv2.calcHist([hist_template], [0], None, [256], [0, 256]).flatten()
 
 # Read into frames.
 while True:
@@ -198,20 +232,16 @@ while True:
             gray = cv2.addWeighted(yolo_cropped[:, :, 1], 0.5, yolo_cropped[:, :, 2], 0.5, 0)
             cv2.imshow("Gray", gray)
 
-            # 直方图正规化
-            hist = cv2.equalizeHist(gray)
+            # 自适应直方图均衡化
+            hist = clahe.apply(gray)
             cv2.imshow("hist", hist)
 
-            # 阈值化
-            ret, TOZERO_img = cv2.threshold(hist, 160, 255, cv2.THRESH_TOZERO)
-            cv2.imshow("threshold", TOZERO_img)
-
             # 中值滤波
-            median_filtered = cv2.medianBlur(TOZERO_img, 3)
+            median_filtered = cv2.medianBlur(hist, 3)
             cv2.imshow("result", median_filtered)
 
             # OCR检测
-            plate = ocr.ocr(TOZERO_img, det=False)
+            plate = ocr.ocr(hist, det=False)
             print(plate)
 
             # 处理输出，判断格式
@@ -226,16 +256,12 @@ while True:
             gray = yolo_cropped[:, :, 1]
             cv2.imshow("Gray", gray)
 
-            # 直方图正规化
-            hist = cv2.equalizeHist(gray)
+            # 自适应直方图均衡化
+            hist = clahe.apply(gray)
             cv2.imshow("hist", hist)
 
-            # 阈值化
-            ret, TRUNC_img = cv2.threshold(hist, 200, 255, cv2.THRESH_TRUNC)
-            cv2.imshow("threshold", TRUNC_img)
-
             # 中值滤波
-            median_filtered = cv2.medianBlur(TRUNC_img, 3)
+            median_filtered = cv2.medianBlur(hist, 3)
             cv2.imshow("result", median_filtered)
 
             # OCR检测
